@@ -563,7 +563,7 @@ The four forms:
 
 ### 8.3 The oklch constructor
 
-`oklch(L, C, H)` in positional three-argument form, with all arguments numeric, denotes a color in the OKLCH space. `L` is on a 0-to-1 scale; because a `%` literal is divided by 100 during parsing, `63.7%` and `0.637` both denote the same lightness. A bare integer lightness greater than 1 is treated as a percentage, clamped, and warned. `C` is chroma and `H` is hue in degrees. The constructor converts to an uppercase 6-digit sRGB hex (no alpha) via the OKLCH-to-sRGB transform of [14.4](#144-oklch-and-srgb-conversion). Named arguments or a non-three-argument form yield no conversion (the surrounding generator then falls back to reading a positional hex or string).
+`oklch(L, C, H)` in positional three-argument form, with all arguments numeric, denotes a color in the OKLCH space. `L` is on a 0-to-1 scale; because a `%` literal is divided by 100 during parsing, `63.7%` and `0.637` both denote the same lightness. A bare integer lightness greater than 1 is treated as a percentage, clamped, and warned. `C` is chroma and `H` is hue in degrees. The constructor converts to an uppercase 6-digit sRGB hex (no alpha) via the standard OKLCH-to-sRGB conversion, channel-clamped into gamut. Named arguments or a non-three-argument form yield no conversion (the surrounding generator then falls back to reading a positional hex or string).
 
 A standalone `oklch(...)` on the right of an assignment (no `color()` wrapper) is a single color primitive: `tokens[name] = hex`, with no ramp and no seed.
 
@@ -833,51 +833,47 @@ Shadow and glow colors are absolute on purpose. A shadow stays dark on any surfa
 
 ## 14. Color ramp generation
 
-`color(seed)` expands its seed into an 11-stop OKLCH ramp at generation time. This section specifies the algorithm precisely. It is shared by the runtime generator and the Blueprint `$var` preprocessor, so both expand a seed identically.
+`color(seed)` expands its seed into an 11-stop OKLCH ramp at generation time. This section specifies the ramp as a behavioral contract plus a normative set of conformance ramps. The expansion is shared by the runtime generator and the Blueprint `$var` preprocessor, so both expand a seed identically.
 
-### 14.1 Stops and constants
+### 14.1 Stops
 
-The eleven steps are `50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950`. The lightness ladder (the target lightness per step before rescaling) is:
+The eleven steps are `50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950`. The seed itself is the `.500` stop; steps below 500 are the light half, steps above 500 are the dark half.
 
-```
-50: 0.97, 100: 0.94, 200: 0.87, 300: 0.80, 400: 0.71, 500: 0.62,
-600: 0.50, 700: 0.42, 800: 0.36, 900: 0.29, 950: 0.23
-```
+### 14.2 The ramp contract
 
-A neutral (near-achromatic) seed uses a lifted light-half ladder for steps 50-400: `50: 0.98, 100: 0.96, 200: 0.92, 300: 0.85, 400: 0.75`. The neutrality threshold is a seed chroma below `0.05`. The dark half always uses the standard ladder regardless of chroma.
+A conforming implementation MUST produce ramps with the following observable properties:
 
-### 14.2 Lightness per stop
+- **The seed IS `.500`, byte-exact.** `name.500` equals the seed's sRGB hex exactly; the seed survives the round trip through the ramp with zero drift.
+- **Constant hue.** Every stop keeps the seed's OKLCH hue.
+- **Perceptually even lightness.** Stop lightness is spaced in OKLCH (perceptual) lightness, anchored to the seed: the light half runs from near-white at `.50` down to the seed at `.500`, and the dark half runs from the seed toward a fixed dark anchor that is lifted off pure black, so the bottom stops stay distinguishable from each other and from black. The spacing rescales around the seed's own lightness, so a light seed compresses its light half and a dark seed compresses its dark half rather than clipping.
+- **Every stop is in sRGB gamut.** Where the seed's chroma cannot be represented at a stop's lightness and the seed's hue, chroma is reduced to the largest in-gamut value rather than channel-clipped, so high-chroma warm seeds produce clean tints instead of muddy clipped substitutes.
+- **Bright tints desaturate faster than dark shades.** Chroma falls off toward both ends of the ramp, asymmetrically: the light extreme ends closer to neutral than the dark extreme (matching Tailwind's convention of pastel highlights and hue-retaining dark variants).
+- **Near-achromatic seeds get a lifted light half.** A seed whose OKLCH chroma is below `0.05` is treated as a neutral: its light-half stops are lifted lighter (airier chrome surfaces, the way Tailwind hand-tunes its grays). The dark half is unaffected by the threshold.
 
-Let `seedL` be the seed's OKLCH lightness. The anchors are `ladderL500 = 0.62`, `lightAnchorL` = the light-half ladder's step-50 value (`0.97`, or `0.98` for a neutral seed), and `darkAnchorL = 0.23`. For each step, the target lightness is:
-
-- **Step 500**: `seedL` (the seed is the `.500` stop).
-- **Step < 500** (light half): `t = (ladderTarget - ladderL500) / (lightAnchorL - ladderL500)`, then `targetL = seedL + t * (lightAnchorL - seedL)`.
-- **Step > 500** (dark half): `t = (ladderTarget - darkAnchorL) / (ladderL500 - darkAnchorL)`, then `targetL = darkAnchorL + t * (seedL - darkAnchorL)`.
-
-This rescales the fixed ladder so the seed's own lightness anchors `.500` and the ladder keeps its relative spacing above and below.
-
-### 14.3 Chroma per stop
-
-The desired chroma is `seedChroma * chromaMultiplier * extremeRolloff`:
-
-- **`chromaMultiplier`** is a parabolic softening `f(L) = 1 - (2L - 1)^2` evaluated at the target lightness divided by the same parabola at the seed lightness (guarded against a near-zero denominator). It peaks near mid-lightness and falls toward the extremes.
-- **`extremeRolloff`** is `factor ^ distance`, where `distance` is the step distance from center (1 at `.400`/`.600`, up to 5 at `.50`/`.950`) and `factor` is `0.78` on the light side, `0.88` on the dark side. It is `1.0` at step 500. Bright tints desaturate faster than dark shades.
-
-The desired chroma is then clamped to the largest in-gamut chroma at the target lightness and the seed's hue, so a warm high-chroma seed does not silently clip. The hue is held constant across the ramp.
-
-### 14.4 OKLCH and sRGB conversion
-
-Conversion from sRGB to OKLCH linearizes the sRGB channels, applies the fixed linear-sRGB-to-LMS matrix, takes cube roots, applies the LMS-to-Oklab matrix, then derives chroma as `sqrt(a^2 + b^2)` and hue as `atan2(b, a)` normalized to `[0, 360)`. The inverse cubes the LMS components, applies the inverse matrices, converts linear to sRGB, and clamps each channel to `[0, 1]` before rounding to 8-bit. Gamut testing checks all sRGB channels within `[-eps, 1 + eps]` (eps `0.0001`); the maximum in-gamut chroma is found by a geometric expansion followed by a 20-iteration binary search.
-
-### 14.5 Re-pinning the seed
-
-After the ramp is computed, step 500 is set back to the exact seed color, so the seed survives round-trip conversion without drift. This makes `.500 == seed` an exact invariant.
-
-### 14.6 Emitted tokens
+### 14.3 Emitted tokens
 
 For each color seed the generator emits `name.50 .. name.950` (11 generated stops) and a bare `name` token equal to the seed color. Neutral (achromatic) seeds produce a grayscale ramp with the lifted light half.
 
-### 14.7 Worked example (validated)
+### 14.4 Conformance ramps (normative)
+
+A conforming implementation MUST reproduce the following ramps bit-exactly. The battery covers the four seed-template brand seeds, the achromatic template neutral, a very light seed, a very dark seed, a maximum-chroma warm seed that exercises the gamut clamp, and a pair of seeds just below and just above the `0.05` neutrality threshold (their seed chromas, as round-tripped from hex, are `0.0443` and `0.0552`). All values below are generated by the shipped implementation.
+
+| Seed | `.50` | `.100` | `.200` | `.300` | `.400` | `.500` | `.600` | `.700` | `.800` | `.900` | `.950` |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `primary` `#0080FF` | `#F2F5FA` | `#E3ECF8` | `#C0D6F4` | `#98C0F5` | `#61A2F8` | `#0080FF` | `#005FC0` | `#004998` | `#003A7B` | `#00295B` | `#001B41` |
+| `secondary` `#FF3377` | `#FBF3F4` | `#FAE7EA` | `#F8CAD1` | `#FAAAB8` | `#FC7C98` | `#FF3377` | `#C50054` | `#9A0040` | `#7B0032` | `#590022` | `#3D0015` |
+| `tertiary` `#FF9900` | `#F9F4EF` | `#F8EDE4` | `#F5DEC9` | `#F5CDA8` | `#F8B675` | `#FF9900` | `#B86D00` | `#8C5200` | `#6C3E00` | `#492800` | `#2D1700` |
+| `quaternary` `#FFDD00` | `#F8F5E9` | `#F8F4E0` | `#F6EFCC` | `#F7EBB1` | `#F9E582` | `#FFDD00` | `#B49C00` | `#867300` | `#645600` | `#403600` | `#231D00` |
+| neutral `#737373` (from `oklch(55.6%, 0, 0)`) | `#F8F8F8` | `#F0F0F0` | `#E1E1E1` | `#C6C6C6` | `#A1A1A1` | `#737373` | `#575757` | `#454545` | `#373737` | `#292929` | `#1D1D1D` |
+| very light `#EAF2FF` | `#F7F8FA` | `#F6F8FB` | `#F5F7FB` | `#F3F6FC` | `#EFF4FD` | `#EAF2FF` | `#8AAADF` | `#5B7CB3` | `#3F5C8B` | `#23385B` | `#101D32` |
+| very dark `#101828` | `#F8F8F9` | `#E9EAED` | `#CACED7` | `#979FB0` | `#546077` | `#101828` | `#121A28` | `#141B28` | `#151B27` | `#171C27` | `#181D26` |
+| max-chroma warm `#FF4400` | `#FBF3F1` | `#F9E8E3` | `#F7CDC2` | `#F9AF9B` | `#FC8364` | `#FF4400` | `#BD3000` | `#942300` | `#761A00` | `#551000` | `#3A0800` |
+| just below threshold `#60768D` (chroma `0.0443`) | `#F8F8F9` | `#EFF1F2` | `#DEE1E6` | `#BFC7D0` | `#94A3B3` | `#60768D` | `#46596C` | `#374656` | `#2D3946` | `#212A33` | `#171E25` |
+| just above threshold `#5B7693` (chroma `0.0552`) | `#F4F5F6` | `#E7EAED` | `#C8CFD7` | `#A9B5C3` | `#8295AB` | `#5B7693` | `#425971` | `#34465A` | `#2A3949` | `#1F2A36` | `#161E27` |
+
+Note the threshold pair: the below-threshold seed's `.50` is `#F8F8F9` (the lifted neutral light half) while the above-threshold seed's `.50` is `#F4F5F6` (the standard chromatic light half). The very dark seed's lightness sits below the ramp's dark anchor, so its dark half compresses into a tight band above the seed rather than descending; the table is the normative record of that behavior.
+
+### 14.5 Worked example (validated)
 
 For `primary: color(#0080FF)`:
 
@@ -888,7 +884,7 @@ For `primary: color(#0080FF)`:
 | 200 | 0.869 | `#C0D6F4` |
 | 300 | 0.798 | `#98C0F5` |
 | 400 | 0.707 | `#61A2F8` |
-| 500 | 0.615 | `#0080FF` (the seed, re-pinned exactly) |
+| 500 | 0.615 | `#0080FF` (the seed, byte-exact) |
 | 600 | 0.498 | `#005FC0` |
 | 700 | 0.417 | `#004998` |
 | 800 | 0.358 | `#003A7B` |
@@ -1207,9 +1203,7 @@ Verbatim from the catalog. Tables marked *historical* are retained in the code f
 
 ### B.1 Color
 
-- **Color steps** (11): `50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950`.
-- **Lightness targets**: `50: 0.97, 100: 0.94, 200: 0.87, 300: 0.80, 400: 0.71, 500: 0.62, 600: 0.50, 700: 0.42, 800: 0.36, 900: 0.29, 950: 0.23`.
-- **Neutral lightness targets** (light half only): `50: 0.98, 100: 0.96, 200: 0.92, 300: 0.85, 400: 0.75`.
+- **Color steps** (11): `50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950`. The per-stop output is specified by contract and conformance table in [14](#14-color-ramp-generation).
 - **Neutral chroma threshold**: `0.05`.
 - **Dark-mode step map** (*historical*, superseded by the index-based mirror): `50: 950, 100: 900, 200: 800, 300: 700, 400: 600, 500: 500, 600: 400, 700: 300, 800: 200, 900: 100, 950: 50`.
 
