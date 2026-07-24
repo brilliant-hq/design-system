@@ -38,3 +38,7 @@ Every op transforms the role's stop index, works on any generator. Out-of-range 
 - `shift(N)`: offset; **sums** across active modes
 - `mirror`: reflect around the middle stop
 - `outward(N)`: push N away from middle toward nearer terminal
+
+Ops land on your ramp as it finally stands: an explicit stop override
+(`primary.300: #FF5A5A`) is what a mirror or shift resolves to, wherever
+the override appears in the file or a brand overlay.
