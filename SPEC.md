@@ -64,14 +64,14 @@ The following goals motivate the design and are stated here as intent, not as no
 
 ### 1.3 Scope and naming
 
-Throughout this document the language is referred to as *the language* or *the `.ds` language*. On disk within a Brilliant project a design system source file is named `Styles/<name>.styles`, not `<name>.ds`; the `.ds` name is the language's public identity (as introduced in the Blueprint documentation), while `.styles` is the concrete file extension a project uses. The two names denote the same language. The resolved artifact a source compiles to is a sibling file `Styles/.gen/<name>.gen.yaml`. Sections that refer to on-disk layout use the `.styles` and `.gen.yaml` names; sections that refer to the language abstractly use `.ds`.
+Throughout this document the language is referred to as *the language* or *the `.ds` language*. On disk within a Brilliant project a design system source file is named `Styles/<name>.ds`: the canonical extension new writes create, and also the language's public identity (as introduced in the Blueprint documentation). The legacy extension `.styles` is still read and is migrated to `.ds` in place when a project is opened, so a not-yet-migrated project keeps working; the two extensions denote the same language. The resolved artifact a source compiles to is a sibling file `Styles/.gen/<name>.gen.yaml`. Sections that refer to on-disk layout use the `.ds` and `.gen.yaml` names; the one-shot legacy migration ([21.2](#212-legacy-migration)) is the only place the old `.styles` name still appears as a live input.
 
 ### 1.4 Relationship to Blueprint
 
 [Blueprint](https://github.com/brilliant-hq/blueprint) is the language in which Brilliant designs are authored. A Blueprint design references a design system token with a `$` sigil (`f[($color.surface)]`, `t(..., $font.size.lg)`). That `$name` is resolved against a design system authored in the language specified here. The two languages are complementary and share the OKLCH ramp constants (so a Blueprint `$var` preprocessor and this language expand the same seed identically), but they are distinct surfaces with distinct grammars. In particular:
 
 - The `$` sigil is a Blueprint concern. Inside a `.ds` document a token reference is a bare dotted path with **no** sigil (`color.error: red.500`). The only `$`-led identifiers in `.ds` are engine metadata keys (`$default`, `$transforms`) and the picker directives (`$hide`, `$pin`); see [4.3](#43-identifiers) and [6.6](#66-hide-and-pin).
-- Alpha ordering in 8-digit hex differs between the two surfaces; see [4.6](#46-hex-color-literals) and the note therein.
+- Alpha ordering in hex is the **same** on both surfaces: an 8-digit hex is `#RRGGBBAA` (alpha last), matching CSS and Blueprint; see [4.6](#46-hex-color-literals) and the note therein.
 
 ### 1.5 Relationship to the authoring guides
 
@@ -139,7 +139,7 @@ The language is processed by a pipeline of four cooperating components. This doc
 A `.ds` document is processed by a fixed pipeline. Each stage is specified in the section named.
 
 ```
-.styles source text
+.ds source text
   --> Lexer          (§4)   token stream + recovered lexical errors
   --> Parser         (§5)   AST + recovered syntactic errors  (never throws)
   --> Resolver       (§6-§13)  design system source + warnings (never halts)
@@ -151,12 +151,12 @@ A `.ds` document is processed by a fixed pipeline. Each stage is specified in th
 An inverse path exists for programmatic mutation and for surfacing a system to an agent:
 
 ```
-design system source --> Migrator (§20.4) --> AST --> Formatter (§20.4) --> .styles text
+design system source --> Migrator (§20.4) --> AST --> Formatter (§20.4) --> .ds text
 ```
 
 Two invariants of the model are load-bearing and normative:
 
-1. **The runtime never reads the resolved artifact back.** Runtime token resolution rebuilds the in-memory design system from the `.styles` source through the generator, then queries it ([16](#16-transform-program-execution)). The `.gen.yaml` file ([18](#18-the-resolved-artifact)) is a human- and tool-readable export only. An implementation MUST NOT make runtime resolution depend on `.gen.yaml`.
+1. **The runtime never reads the resolved artifact back.** Runtime token resolution rebuilds the in-memory design system from the `.ds` source through the generator, then queries it ([16](#16-transform-program-execution)). The `.gen.yaml` file ([18](#18-the-resolved-artifact)) is a human- and tool-readable export only. An implementation MUST NOT make runtime resolution depend on `.gen.yaml`.
 
 2. **The cascade is merged once, at the source level, then generated once.** When a canvas resolves against a chain of files ([17](#17-the-cascade)), the sources are merged field by field into a single source, and the generator runs a single time on the merged source. Merging at the source level (rather than generating each file and merging catalogs) preserves cross-file logic such as a child's stop override shadowing a parent's generated stop.
 
@@ -180,7 +180,7 @@ The lexer emits exactly these token kinds.
 | `integer` | a pure integer with an optional single leading `-` | `42`, `-3` |
 | `decimal` | a number with a `.` between digits and/or a trailing `%` | `1.5`, `-0.01`, `63.7%` |
 | `string` | double-quoted content, no escapes; text excludes the quotes | `"Noto Serif"` |
-| `hexColor` | `#` followed by exactly 3, 6, or 8 hex digits; text retains the `#` | `#FFF`, `#FB2C36`, `#FB2C3680` |
+| `hexColor` | `#` followed by exactly 3, 4, 6, or 8 hex digits; text retains the `#` | `#FFF`, `#FFF8`, `#FB2C36`, `#FB2C3680` |
 | `colon` | `:` | |
 | `comma` | `,` | |
 | `dot` | `.` | |
@@ -234,13 +234,13 @@ Decimal         = decimal                    ; text may carry a trailing '%'
 
 ### 4.6 Hex color literals
 
-A hex color is `#` followed by a run of hex digits. The lexer accepts exactly 3, 6, or 8 hex digits and rejects any other count with `hex color must be 3, 6, or 8 hex digits (got N)`, yielding an `invalid` token. A 4-digit hex is therefore a lexical error even though the downstream color parser would accept four digits.
+A hex color is `#` followed by a run of hex digits. The lexer accepts exactly 3, 4, 6, or 8 hex digits and rejects any other count with `hex color must be 3, 4, 6, or 8 hex digits (got N)`, yielding an `invalid` token. A 4-digit hex is a valid short form (`#RGBA`) carrying alpha in its trailing digit.
 
 ```
-HexColor        = hexColor                   ; '#' then 3, 6, or 8 hex digits
+HexColor        = hexColor                   ; '#' then 3, 4, 6, or 8 hex digits
 ```
 
-> **Note (8-digit alpha ordering).** An 8-digit hex is interpreted by the color layer as `#AARRGGBB` (alpha **first**), not `#RRGGBBAA` (alpha last, the CSS convention). Authoring `#FF000080` in a `.ds` file yields a color with alpha `0xFF`, red `0x00`, green `0x00`, blue `0x80`, not opaque red at half alpha. This differs from CSS and from Blueprint, where alpha is last. An author who wants a semi-transparent color SHOULD prefer `rgba(...)` inside a composite ([13.2](#132-shadow)) or an explicit `#AARRGGBB` with alpha understood as leading. This is a known cross-language inconsistency.
+> **Note (alpha ordering: alpha last).** The `.ds` color layer reads hex the way CSS and Blueprint do: **alpha last**. An 8-digit hex is `#RRGGBBAA` and the 4-digit short form is `#RGBA`, both carrying alpha in the trailing digits. Authoring `#FF000080` in a `.ds` file yields opaque-red at half alpha (red `0xFF`, green `0x00`, blue `0x00`, alpha `0x80`), and `#F008` is the same color in short form. This matches CSS and Blueprint exactly; `.ds` and Blueprint now agree at the author level. (The shared engine-side `fromHex` helper used by non-`.ds` consumers still reads 8-digit hex alpha-first, but the `.ds` color path uses its own alpha-last parser, so an author never sees the old inconsistency.)
 
 ### 4.7 Strings
 
@@ -254,7 +254,7 @@ String          = string                     ; '"' ... '"', no escapes
 
 Spaces, tabs, carriage returns, and newlines are whitespace. `//` begins a line comment that runs to end of line. `/* ... */` is a block comment; an unterminated block comment appends an `unterminated block comment` error but emits no token. Whitespace and comments are discarded entirely at lex time: they are not tokens and do not appear in the token stream.
 
-> **Note (comment preservation, honest scope).** Because the lexer discards comments and the formatter cannot re-emit them, comments do **not** survive a parse-then-format round trip and are **not** copied into `.gen.yaml` (whose provenance comments are generated fresh from token sources). Comments survive only in two paths: (a) when a `.styles` file is edited by surgical text patching, which splices new statements into the existing text rather than reformatting it, and (b) when a raw source file is emitted verbatim into agent context. An author's design-intent comments therefore persist in a hand-maintained or surgically-patched `.styles` file, but any transformation that goes through the formatter drops them. Claims that comments are "preserved into the resolved catalog" apply only to the surgical-patch and verbatim-emit surfaces.
+> **Note (comment preservation, honest scope).** Because the lexer discards comments and the formatter cannot re-emit them, comments do **not** survive a parse-then-format round trip and are **not** copied into `.gen.yaml` (whose provenance comments are generated fresh from token sources). Comments survive only in two paths: (a) when a `.ds` file is edited by surgical text patching, which splices new statements into the existing text rather than reformatting it, and (b) when a raw source file is emitted verbatim into agent context. An author's design-intent comments therefore persist in a hand-maintained or surgically-patched `.ds` file, but any transformation that goes through the formatter drops them. Claims that comments are "preserved into the resolved catalog" apply only to the surgical-patch and verbatim-emit surfaces.
 
 ### 4.9 Lexical error recovery
 
@@ -268,7 +268,7 @@ The source `font.size.2xl: 63.7%` lexes to:
 identifier("font") dot identifier("size") dot identifier("2xl") colon decimal("63.7%") eof
 ```
 
-`63.7%` is a single `decimal` token whose text retains the `%`. `2xl` is an `identifier` (it contains letters) though it begins with a digit. The malformed `#12345` (five hex digits) yields one `invalid` token and the error `hex color must be 3, 6, or 8 hex digits (got 5)`.
+`63.7%` is a single `decimal` token whose text retains the `%`. `2xl` is an `identifier` (it contains letters) though it begins with a digit. The malformed `#12345` (five hex digits) yields one `invalid` token and the error `hex color must be 3, 4, 6, or 8 hex digits (got 5)`.
 
 ---
 
@@ -399,7 +399,7 @@ ActiveField     = ( 'brand' ':' Path | 'modes' ':' Record ) ','?
 
 `active { brand: <name>, modes: { axis: value } }` records the folder-level active brand and starting mode set. The `modes:` field requires a record literal. An unknown field name produces `unknown active field "<name>" (expected 'brand' or 'modes')`. The active block is metadata for visibility (which brand and modes a folder starts in); runtime resolution is queried per element and is not driven by the active block. The resolver records an `active` value only when at least one field is present.
 
-> **Note (active in agent-authored bodies).** Although `active { ... }` is valid grammar and resolves cleanly, the agent-facing authoring directive that writes brand files rejects a body containing `active`, because folder-level defaults are meant to be author-controlled. The same construct is therefore legal in a hand-maintained `default.styles` but refused when authored through that directive. See [19.5](#195-the-authoring-write-gate).
+> **Note (active in agent-authored bodies).** Although `active { ... }` is valid grammar and resolves cleanly, the agent-facing authoring directive that writes brand files rejects a body containing `active`, because folder-level defaults are meant to be author-controlled. The same construct is therefore legal in a hand-maintained `default.ds` but refused when authored through that directive. See [19.5](#195-the-authoring-write-gate).
 
 ### 6.5 Value form summary
 
@@ -474,7 +474,7 @@ The parser selects a value production by the leading token: `{` begins a record,
 
 ### 7.1 Hex color literals
 
-A `hexColor` token becomes a hex color literal retaining its `#`. Its interpretation as a color (including the 8-digit alpha-first behavior) is specified in [4.6](#46-hex-color-literals).
+A `hexColor` token becomes a hex color literal retaining its `#`. Its interpretation as a color (including the alpha-last ordering of 4- and 8-digit forms) is specified in [4.6](#46-hex-color-literals).
 
 ### 7.2 Strings
 
@@ -624,7 +624,7 @@ The inner generator MUST be `color(...)` or `number(...)` as the specific semant
 
 `boldness(inner)` produces the nine boldness roles.
 
-- **`boldness(color(...))`.** The color seed is registered ([8.1](#81-the-color-generator)), then each of the nine roles is emitted. A role's default stop is `name.<stop>` where the stop is taken from the fixed role-to-stop map: `hint -> 50`, `faint -> 100`, `subtle -> 200`, `soft -> 300`, `mid -> 500`, `firm -> 600`, `bold -> 700`, `strong -> 800`, `intense -> 900`. Stops `.400` and `.950` are not mapped to any role and remain available as primitives. If a transform program applies, the role token is a map `{ $default: "name.stop", $transforms: { stops, baseIndex, program } }` where `stops` is the full 11-stop list `name.50 .. name.950`, `baseIndex` is the index of the role's stop within the 11 color steps, and `program` is the transform program ([10](#10-mode-transforms)). If no transform program applies, the role token is the bare `"name.stop"` string. The bare `name` alias equals `.500` equals the `mid` role.
+- **`boldness(color(...))`.** The color seed is registered ([8.1](#81-the-color-generator)), then each of the nine roles is emitted. A role's default stop is `name.<stop>` where the stop is taken from the fixed role-to-stop map: `hint -> 50`, `faint -> 100`, `subtle -> 200`, `soft -> 300`, `mid -> 500`, `firm -> 600`, `bold -> 700`, `strong -> 800`, `intense -> 900`. Stops `.400` and `.950` are not mapped to any role and remain available as primitives. If a transform program applies, the role token is a map `{ $default: "name.stop", $transforms: { stops, baseIndex, program } }` where `stops` is the **9 role stops in role order** (`name.50 name.100 name.200 name.300 name.500 name.600 name.700 name.800 name.900`, not the full 11-stop ramp, and never the two non-role primitives `.400`/`.950`), `baseIndex` is the role's position within that 9-element role list, and `program` is the transform program ([10](#10-mode-transforms)). Building the mirror over the 9-stop role band is what makes `mirror` swap roles symmetrically across `mid`; the two non-role stops stay power-user primitives. If no transform program applies, the role token is the bare `"name.stop"` string. The bare `name` alias equals `.500` equals the `mid` role.
 
 - **`boldness(number(...))`.** The number scale is materialized ([8.2](#82-the-number-generator)), then role *i* maps positionally to `name.<i+1>` over the 1-based stops (`hint -> .1`, `mid -> .5`, `bold -> .7`, `intense -> .9` for a nine-element list). Transform program stops are `name.1 .. name.totalStops`, base index *i*.
 
@@ -698,7 +698,7 @@ Each operator acts on the role's integer stop index within the role token's `sto
 - **`mirror`**: reflects the index across the full stop list, `idx -> (len - 1) - idx`. The exact center is a fixed point.
 - **`outward(N)`**: moves `N` stops away from the center toward the nearer terminal. An index below center decreases by `N`; an index above center increases by `N`; an index exactly at center is unchanged.
 
-> **Note (mirror over the full color stop list).** For `boldness(color(...))`, the `stops` list of a role token is the full 11-stop color ramp `name.50 .. name.950`, and `mirror` reflects across all 11. Consequently `hint` (stop `.50`, index 0) mirrors to index 10 (`name.950`), `faint` (`.100`) to `name.900`, `subtle` (`.200`) to `name.800`, `soft` (`.300`) to `name.700`, `mid` (`.500`) to `name.500`, `firm` (`.600`) to `name.400`, `bold` (`.700`) to `name.300`, `strong` (`.800`) to `name.200`, and `intense` (`.900`) to `name.100`. This is the implemented behavior (validated by dynamic resolution): a dark-mode `primary.hint` resolves to the value of `primary.950`. Note that two of the mirror targets (`.400` and `.950`) are the two stops not mapped to any role, so a mirrored low role lands one stop more extreme than the symmetric role-band partner an author might expect (`hint`'s role-band partner is `intense` at `.900`, but its mirror image is `.950`). An author who needs the exact role-band swap should author per-mode values with a semantic block ([11](#11-mode-keyed-semantic-values)) rather than relying on the index mirror.
+> **Note (mirror over the 9-stop role band).** For `boldness(color(...))`, the `stops` list of a role token is the **9 role stops in role order** (`name.50 name.100 name.200 name.300 name.500 name.600 name.700 name.800 name.900`), not the full 11-stop ramp, and `mirror` reflects across those 9 (`idx -> 8 - idx`). Consequently the dark mirror is exactly the role-band swap: `hint` (`.50`, index 0) mirrors to `intense` at `name.900`, `faint` (`.100`) to `strong` at `name.800`, `subtle` (`.200`) to `bold` at `name.700`, `soft` (`.300`) to `firm` at `name.600`, `mid` (`.500`) stays at `name.500`, `firm` (`.600`) to `soft` at `name.300`, `bold` (`.700`) to `subtle` at `name.200`, `strong` (`.800`) to `faint` at `name.100`, and `intense` (`.900`) to `hint` at `name.50`. This is the implemented behavior (validated by dynamic resolution): a dark-mode `primary.hint` resolves to the value of `primary.900` (intense's stop). Because the two non-role stops `.400` and `.950` are excluded from the mirror band, a mirrored role lands exactly on its symmetric role-band partner, never on a power-user primitive.
 
 ### 10.3 Default transform programs
 
@@ -729,7 +729,7 @@ spacing: tshirt(number([4, 8, 12, 16, 24, 32, 48, 64, 96, 128]), min: { none: 0 
 radius:  tshirt(number([2, 4, 6, 8, 12, 16]), transforms: none)
 ```
 
-With the default programs, resolving `primary.hint` in dark mode yields the value of `primary.950` (mirror over 11 stops), while `primary.mid` in dark stays at `primary.500`. Resolving `spacing.md` under `density.compact` yields the value of the `spacing.sm` position (a `shift(-1)`: measured `spacing.md == 12`, its compact resolution `== 8`, the value at the `sm` stop), and under `accessibility.large-text` yields the `spacing.lg` position (measured `16`). `radius` opts out entirely and never changes with mode. All values in this paragraph are validated by dynamic resolution.
+With the default programs, resolving `primary.hint` in dark mode yields the value of `primary.900` (mirror over the 9-stop role band lands `hint` on `intense`), while `primary.mid` in dark stays at `primary.500`. Resolving `spacing.md` under `density.compact` yields the value of the `spacing.sm` position (a `shift(-1)`: measured `spacing.md == 12`, its compact resolution `== 8`, the value at the `sm` stop), and under `accessibility.large-text` yields the `spacing.lg` position (measured `16`). `radius` opts out entirely and never changes with mode. All values in this paragraph are validated by dynamic resolution.
 
 ---
 
@@ -972,27 +972,28 @@ Semantic-block values are keyed by **value-only** mode names (`dark`, `compact|d
 
 ### 16.5 Worked example (validated)
 
-Given the [10.5](#105-worked-example-validated) system and an active set `{dark, theme.dark}`: `primary.hint` resolves through the transform pass (mirror) to the value of `primary.950`, and `primary.mid` stays at `primary.500`. Given active set `{compact, density.compact, dark, theme.dark}`: `text.error` (from [11.4](#114-worked-examples-validated)) resolves through the combo pass to `red.200`.
+Given the [10.5](#105-worked-example-validated) system and an active set `{dark, theme.dark}`: `primary.hint` resolves through the transform pass (mirror over the 9-stop role band) to the value of `primary.900`, and `primary.mid` stays at `primary.500`. Given active set `{compact, density.compact, dark, theme.dark}`: `text.error` (from [11.4](#114-worked-examples-validated)) resolves through the combo pass to `red.200`.
 
 ---
 
 ## 17. The cascade
 
-A design system is rarely one file. A canvas resolves against a chain of `.styles` files determined by folder structure and the requested brand. This section specifies the chain, the merge, and the pruning.
+A design system is rarely one file. A canvas resolves against a chain of `.ds` files determined by folder structure and the requested brand. This section specifies the chain, the merge, and the pruning.
 
 ### 17.1 File layout
 
-Per brand, a file `Styles/<name>.styles`; the project baseline is `Styles/default.styles`. Generated artifacts live under `Styles/.gen/<name>.gen.yaml` (gitignored). The directory name is `Styles`, the default file is `default.styles`, and a `.legacy` subdirectory archives pre-migration files.
+Per brand, a file `Styles/<name>.ds`; the project baseline is `Styles/default.ds`. Generated artifacts live under `Styles/.gen/<name>.gen.yaml` (gitignored). The directory name is `Styles`, the default file is `default.ds`, and a `.legacy` subdirectory archives pre-migration files.
 
 ### 17.2 Cascade resolution
 
 Resolving a design system for a canvas proceeds as:
 
-1. **Base cascade.** Walk from the repository root down to the canvas's folder, collecting each ancestor folder's `Styles/default.styles` in root-to-leaf order.
+1. **Base cascade.** Walk from the repository root down to the canvas's folder, collecting each ancestor folder's `Styles/default.ds` in root-to-leaf order.
 2. **Brand cascade.** If a brand is requested, collect its cascade. A bare brand name collects the full brand-file chain; a path form (`./x`, `../shared/x`, `/shared/x`) resolves to a single file. An empty brand cascade logs a warning and falls back to the base.
 3. **Root pruning.** Prune each cascade at the leaf-most file whose `root: true` flag is set: walk from leaf toward root, find the first such file, and drop every ancestor above it (the boundary file itself is kept). This mirrors `.editorconfig` semantics.
-4. **Merge.** Merge the pruned base cascade followed by the pruned brand cascade, each source overriding the previous, skipping empty sources.
-5. **Generate once.** Run the generator a single time on the merged source. The available modes are the merged source's mode set.
+4. **Inherits-none boundary.** Concatenate the pruned base cascade followed by the pruned brand cascade, then truncate the combined list at the leaf-most source declaring `inherits: none` (`inheritsBase == false`): everything earlier in the chain is dropped, so a standalone sheet sheds both the base ancestors and any parent-brand layers. Default inheriting sources (`inheritsBase == true`, the norm) leave the list untouched.
+5. **Merge.** Merge the surviving sources in order, each source overriding the previous, skipping empty sources.
+6. **Generate once.** Run the generator a single time on the merged source. The available modes are the merged source's mode set.
 
 ### 17.3 Source merge semantics
 
@@ -1019,15 +1020,15 @@ The child's removals are applied to the merged source. A removal path is matched
 
 `inherits: none` sets `inheritsBase = false`, declaring a brand standalone (it should not layer on the base).
 
-> **Note (inherits: none at runtime).** The `inheritsBase` flag is honored by the delta computation and by the dry-run and `.gen.yaml` generation paths (which return the standalone source as-is), but the **runtime cascade merge does not read it**: at render time a brand cascade is layered on the base unconditionally. So `inherits: none` currently affects the surfaced delta and the generated artifact for a standalone body, but not live rendering. This is a known divergence between documented intent and runtime behavior; an author relying on `inherits: none` for render-time isolation will not get it today.
+> **Note (inherits: none at runtime).** The `inheritsBase` flag is honored everywhere: the delta computation, the dry-run and `.gen.yaml` generation paths (which return the standalone source as-is), **and the runtime cascade merge** ([17.2](#172-cascade-resolution) step 4). At render time the merge truncates at the leaf-most `inherits: none` source, so a standalone brand sheds the base and parent-brand layers live, exactly as the surfaced delta and the generated artifact already showed. An author relying on `inherits: none` for render-time isolation gets it.
 
 ### 17.6 Brand and mode switching
 
-Persistent brand and mode selection mutate the file's `active { ... }` block (write source, regenerate the artifact, invalidate caches, notify). Transient preview sets an in-memory overlay with no file write; a folder's active design system folds each folder file's `active` (leaf wins) and overlays the preview. Caching is keyed by canvas path and brand; a change to a root `.styles` file invalidates everything below it.
+Persistent brand and mode selection mutate the file's `active { ... }` block (write source, regenerate the artifact, invalidate caches, notify). Transient preview sets an in-memory overlay with no file write; a folder's active design system folds each folder file's `active` (leaf wins) and overlays the preview. Caching is keyed by canvas path and brand; a change to a root `.ds` file invalidates everything below it.
 
 ### 17.7 Worked example (cascade)
 
-A project `default.styles` sets `primary: boldness(color(#0080FF))`; a folder brand `corporate-blue.styles` sets `primary: boldness(color(#1E40AF))`. Resolving a canvas in that folder with brand `corporate-blue` yields `primary.mid == #1E40AF` (the child seed wins). If `corporate-blue.styles` additionally sets `root: true`, the ancestor base above the folder is pruned, but a sibling `default.styles` in the same folder still merges (the base cascade and the brand cascade are collected separately).
+A project `default.ds` sets `primary: boldness(color(#0080FF))`; a folder brand `corporate-blue.ds` sets `primary: boldness(color(#1E40AF))`. Resolving a canvas in that folder with brand `corporate-blue` yields `primary.mid == #1E40AF` (the child seed wins). If `corporate-blue.ds` additionally sets `root: true`, the ancestor base above the folder is pruned, but a sibling `default.ds` in the same folder still merges (the base cascade and the brand cascade are collected separately).
 
 ---
 
@@ -1037,7 +1038,7 @@ Serialization writes a resolved design system to a `.gen.yaml` file. The artifac
 
 ### 18.1 Header and structure
 
-The file opens with a generated header (`GENERATED - DO NOT EDIT. Edit the sibling .styles file; this regenerates automatically.`). Then, in order:
+The file opens with a generated header (`GENERATED - DO NOT EDIT. Edit the sibling .ds file; this regenerates automatically.`). Then, in order:
 
 1. A warnings block (each generation warning as a comment) if any.
 2. An `$active:` block (name plus modes) if a folder-active declaration exists (visibility only; it does not affect resolution).
@@ -1092,7 +1093,7 @@ This section collects the normative obligations on a conforming implementation.
 
 ### 20.1 Lexer
 
-A conforming lexer MUST NOT throw on any input. On malformed input it MUST append a `ParseError` and, where a token position is involved, emit an `invalid` token and continue. It MUST classify tokens exactly as [4.2](#42-token-kinds) specifies, including: digit-leading words containing a letter as identifiers; `$`-led words as identifiers; a trailing `%` folded into a `decimal`; hex of exactly 3, 6, or 8 digits accepted and all other counts rejected; strings without escapes that cannot span lines; and comments discarded as trivia.
+A conforming lexer MUST NOT throw on any input. On malformed input it MUST append a `ParseError` and, where a token position is involved, emit an `invalid` token and continue. It MUST classify tokens exactly as [4.2](#42-token-kinds) specifies, including: digit-leading words containing a letter as identifiers; `$`-led words as identifiers; a trailing `%` folded into a `decimal`; hex of exactly 3, 4, 6, or 8 digits accepted and all other counts rejected; strings without escapes that cannot span lines; and comments discarded as trivia.
 
 ### 20.2 Parser
 
@@ -1118,13 +1119,23 @@ Generation MUST be deterministic: the same merged source MUST produce the same t
 
 ### 21.1 The evolution regime
 
-The language evolves additively under a forgiving parser. New generators, roles, and named boundary stops are added without breaking existing files, and near-miss authoring forms are absorbed with a teaching diagnostic rather than rejected. Because the runtime rebuilds from source and the `.gen.yaml` artifact is disposable, regeneration is always safe: the `.styles` source is the single source of truth.
+The language evolves additively under a forgiving parser. New generators, roles, and named boundary stops are added without breaking existing files, and near-miss authoring forms are absorbed with a teaching diagnostic rather than rejected. Because the runtime rebuilds from source and the `.gen.yaml` artifact is disposable, regeneration is always safe: the `.ds` source is the single source of truth.
 
-> **Note (no language version stamp).** Unlike Blueprint (which carries a language-version marker), a `.styles` file carries **no** embedded language version, schema version, or migration marker. The additive-evolution regime relies on the parser's forgiveness and the runtime's rebuild-from-source rather than on a version gate. There is currently no mechanism to detect or gate a breaking change at the file level. An implementation that must introduce a breaking change has no in-band signal to key on; this is an acknowledged gap.
+> **Note (the `ds:vN` version stamp).** A written `.ds` file carries a grammar-version stamp as its **first line**: `ds:v1` for the current grammar, the twin of Blueprint's `bp:v1`. The on-disk serializer (the `mutateSource`/`restoreSource` writers and the startup migration) stamps every non-empty file with the current version; an empty file (the "no design system" state) is left unstamped so it still reads as empty. The agent-facing delta path stays stamp-free.
+>
+> The stamp is a genuine top-level statement: `ds:v1` lexes as the identifier `ds`, a `:`, and the value `v1`, exactly like `hide:` / `pin:` / `root:` / `inherits:`. The resolver recognizes it and parks the version under the `$dsVersion` meta-key (the same `$`-prefixed channel as `$hide`/`$pin`), so it survives cascade merging, reaches the generator, and never materializes as a design token or leaks into `.gen.yaml`.
+>
+> Reads are forgiving (the forgiving-compiler doctrine):
+> - **Unstamped** legacy `.ds` (no `ds:` line) → loads as **v1**, the current shape.
+> - **Known** version (`ds:v1` up to the build's current version) → loads.
+> - **Unknown / higher** version (e.g. `ds:v99`, or anything greater than the build's current version) → the generator emits a **loud halt `DsDiagnostic`** (naming the unsupported version, telling the user the file was written by a newer version of Brilliant and to update to open it), the same currency the `ds_file()` dry-run refuses writes on, never a silent misparse of newer syntax as v1.
+> - A `ds:` line whose value is **not** a version stamp falls through to normal token handling, so a token literally named `ds` is never swallowed (never handcuff intentional usage).
+>
+> Version-stamping only: the current grammar is v1. A future breaking change to the grammar or its frozen resolution defaults is a **new** version (`ds:v2`) plus a forward migration, never an in-place reinterpretation of stored v1 files. The migration runner is intentionally deferred until the first real bump needs it: the stamp and the read-gate are what had to land first.
 
 ### 21.2 Legacy migration
 
-A one-shot startup migration lifts a legacy single-file YAML `.styles` into the DSL layout: it converts `<folder>/.styles` into `<folder>/Styles/default.styles`, archiving the original under `Styles/.legacy/` for one release. The base file embeds the seed template first, then appends the user's migrated customizations (append-and-resolver-wins), so a customization overrides the corresponding template default. Brand siblings are kept sparse (no template embed). Pre-DSL catalog renames (`brand.5 -> brand.50`, and so on) are applied before parsing. The migration is idempotent; re-running it is a no-op, and a rollback restores the archived legacy layout.
+A one-shot startup migration lifts a legacy single-file YAML `.styles` into the DSL layout: it converts `<folder>/.styles` into `<folder>/Styles/default.ds`, archiving the original under `Styles/.legacy/` for one release. The base file embeds the seed template first, then appends the user's migrated customizations (append-and-resolver-wins), so a customization overrides the corresponding template default. Brand siblings are kept sparse (no template embed). Pre-DSL catalog renames (`brand.5 -> brand.50`, and so on) are applied before parsing. The migration is idempotent; re-running it is a no-op, and a rollback restores the archived legacy layout.
 
 ---
 
@@ -1217,7 +1228,7 @@ Font weight and line height have no dedicated catalog table; the historical `kFo
 
 - **Boldness roles** (9, center `mid`): `hint, faint, subtle, soft, mid, firm, bold, strong, intense`.
 - **Boldness color stop by role**: `hint: 50, faint: 100, subtle: 200, soft: 300, mid: 500, firm: 600, bold: 700, strong: 800, intense: 900`. Stops `.400` and `.950` are not mapped to a role and remain primitives.
-- **Boldness dark role swap** (*historical*, superseded by the index-based mirror): `hint <-> intense, faint <-> strong, subtle <-> bold, soft <-> firm, mid <-> mid`.
+- **Boldness dark role swap**: `hint <-> intense, faint <-> strong, subtle <-> bold, soft <-> firm, mid <-> mid`. This is exactly what the default dark `mirror` now produces: the transform reflects across the 9-stop role band ([9.1](#91-boldness), [10.2](#102-transform-operations)), so each role lands on the partner listed here (the code realizes the swap via the index mirror rather than by consulting this table).
 - **T-shirt roles** (24): `xs, sm, md, lg, xl, 2xl, 3xl, 4xl, 5xl, 6xl, 7xl, 8xl, 9xl, 10xl, 11xl, 12xl, 13xl, 14xl, 15xl, 16xl, 17xl, 18xl, 19xl, 20xl`.
 - **T-shirt index by role for a linear scale** (generated-ramp/range form only): `xs: 1, sm: 2, md: 4, lg: 6, xl: 8, 2xl: 12, 3xl: 16, 4xl: 20, 5xl: 24, 6xl: 32`.
 - **Looseness roles** (6): `none, tight, snug, normal, relaxed, loose`.
@@ -1239,11 +1250,12 @@ The suggested stop a Blueprint reference falls back to for a bare number-scale r
 
 ## Appendix C. The seed template
 
-The seed template is the canonical worked example. It is written verbatim into `<root>/Styles/default.styles` on a fresh project and is the baseline that brand deltas render against. It parses (more than 50 statements), resolves with zero warnings, and generates the built-in Brilliant design system. It exercises nearly every construct in the language: three mode axes; hex and OKLCH color seeds; an achromatic neutral; twenty-one Tailwind palettes; list-form and boundary-bearing t-shirt scales; a `transforms: none` opt-out; a `boldness(number)` scale with three max boundary stops; a custom numeric semantic (`visibility`); negative-number stop overrides; bareword and quoted font families; a `transforms:` override; role aliases; absolute shadow and glow colors; typography and shadow composites; and `hide`/`pin` picker hints.
+The seed template is the canonical worked example. It is written verbatim into `<root>/Styles/default.ds` on a fresh project and is the baseline that brand deltas render against. It parses (more than 50 statements), resolves with zero warnings, and generates the built-in Brilliant design system. It exercises nearly every construct in the language: three mode axes; hex and OKLCH color seeds; an achromatic neutral; twenty-one Tailwind palettes; list-form and boundary-bearing t-shirt scales; a `transforms: none` opt-out; a `boldness(number)` scale with three max boundary stops; a custom numeric semantic (`visibility`); negative-number stop overrides; bareword and quoted font families; a `transforms:` override; role aliases; absolute shadow and glow colors; typography and shadow composites; and `hide`/`pin` picker hints.
 
-The template is reproduced below verbatim.
+The template is reproduced below verbatim. Its first line is the `ds:v1` grammar-version stamp ([21.1](#211-the-evolution-regime)).
 
 ```
+ds:v1
 // The default design system, carrying Brilliant's own visual identity.
 // Every token below is something your designs reference, so one edit
 // here ripples through the whole project.
@@ -1445,7 +1457,7 @@ pin:  primary, secondary, tertiary, quaternary,
 | Condition | Message |
 |---|---|
 | unexpected character | `unexpected character "<c>"` |
-| bad hex length | `hex color must be 3, 6, or 8 hex digits (got N)` |
+| bad hex length | `hex color must be 3, 4, 6, or 8 hex digits (got N)` |
 | unterminated string | `unterminated string` |
 | identifier starting with `-` | `identifier cannot start with "-"` |
 | unterminated block comment | `unterminated block comment` |
