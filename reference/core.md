@@ -5,7 +5,7 @@ dsl: [ds, designSystem, brand, mode]
 
 Every color, font, and scale value in a blueprint is a token (`$name`),
 resolved through the active design system. Init context shows that DS
-verbatim as a `.styles` catalog: read it for real token names and values.
+verbatim as a `.ds` catalog: read it for real token names and values.
 
 Stops follow two vocabularies:
 - **Presence ramp** (brand/palette stops, `$font.weight`, `$stroke.width`,

@@ -7,7 +7,7 @@ dsl: [ds_file, unset, designSystem, brand, modes]
 body is indentation-based DSL. It inherits the project `default` (the
 catalog shown in your init context), so declare ONLY what differs, a
 real brand is usually a few lines. Output merges into
-`<canvas-folder>/Styles/<name>.styles` and runs before element rows, so
+`<canvas-folder>/Styles/<name>.ds` and runs before element rows, so
 later rows can `ds(name)` it. Kebab-case; name the visual direction
 (`fintech-warm`), not the task.
 
@@ -43,4 +43,8 @@ ds_file("fintech-warm")
 After `ds_file()`, the brand becomes the session default and unstamped
 frames auto-stamp it. `inherits: none` makes a brand standalone (rare);
 `root: true` stops the parent-folder cascade. Comments are preserved
-into `.styles` and carry to future sessions, use them for design intent.
+into `.ds` and carry to future sessions, use them for design intent.
+
+Unsure which design system to work against, or whether you may edit one?
+Do not guess: propose it with `execute_commands` `suggest_setting_change`
+(see `blueprint/commands`) and let the user accept or decline.
