@@ -68,7 +68,7 @@ Throughout this document the language is referred to as *the language* or *the `
 
 ### 1.4 Relationship to Blueprint
 
-[Blueprint](https://github.com/brilliant-hq/blueprint) is the language in which Brilliant designs are authored. A Blueprint design references a design system token with a `$` sigil (`f[($color.surface)]`, `t(..., $font.size.lg)`). That `$name` is resolved against a design system authored in the language specified here. The two languages are complementary and share the OKLCH ramp constants (so a Blueprint `$var` preprocessor and this language expand the same seed identically), but they are distinct surfaces with distinct grammars. In particular:
+[Blueprint](https://github.com/brilliant-hq/blueprint) is the language in which Brilliant designs are authored. A Blueprint design references a design system token with a `$` sigil (`f[($color.surface)]`, `t(..., $font.size.lg)`). That `$name` is resolved against a design system authored in the language specified here. The two languages are complementary and share the OKLCH ramp constants, so a seed expands to the same ramp whether it is generated here or referenced from a Blueprint `$name`; the reference resolves against a design system built by this language's generator. (An earlier Blueprint `$var` *declaration* preprocessor that expanded seeds inline has been removed: a legacy `$name=...` declaration is now stripped with a warning pointing to a `ds_file` design system, while a `$name` *reference* resolves unchanged.) They remain distinct surfaces with distinct grammars. In particular:
 
 - The `$` sigil is a Blueprint concern. Inside a `.ds` document a token reference is a bare dotted path with **no** sigil (`color.error: red.500`). The only `$`-led identifiers in `.ds` are engine metadata keys (`$default`, `$transforms`) and the picker directives (`$hide`, `$pin`); see [4.3](#43-identifiers) and [6.6](#66-hide-and-pin).
 - Alpha ordering in hex is the **same** on both surfaces: an 8-digit hex is `#RRGGBBAA` (alpha last), matching CSS and Blueprint; see [4.6](#46-hex-color-literals) and the note therein.
@@ -833,7 +833,7 @@ Shadow and glow colors are absolute on purpose. A shadow stays dark on any surfa
 
 ## 14. Color ramp generation
 
-`color(seed)` expands its seed into an 11-stop OKLCH ramp at generation time. This section specifies the ramp as a behavioral contract plus a normative set of conformance ramps. The expansion is shared by the runtime generator and the Blueprint `$var` preprocessor, so both expand a seed identically.
+`color(seed)` expands its seed into an 11-stop OKLCH ramp at generation time. This section specifies the ramp as a behavioral contract plus a normative set of conformance ramps. The expansion is performed by the runtime generator; a Blueprint `$name` reference resolves against a system built by that same generator, so a seed expands to the same ramp wherever it is referenced.
 
 ### 14.1 Stops
 
@@ -845,7 +845,7 @@ A conforming implementation MUST produce ramps with the following observable pro
 
 - **The seed IS `.500`, byte-exact.** `name.500` equals the seed's sRGB hex exactly; the seed survives the round trip through the ramp with zero drift.
 - **Constant hue.** Every stop keeps the seed's OKLCH hue.
-- **Perceptually even lightness.** Stop lightness is spaced in OKLCH (perceptual) lightness, anchored to the seed: the light half runs from near-white at `.50` down to the seed at `.500`, and the dark half runs from the seed toward a fixed dark anchor that is lifted off pure black, so the bottom stops stay distinguishable from each other and from black. The spacing rescales around the seed's own lightness, so a light seed compresses its light half and a dark seed compresses its dark half rather than clipping.
+- **Perceptually even lightness.** Stop lightness is spaced in OKLCH (perceptual) lightness, anchored to the seed: the light half runs from near-white at `.50` down to the seed at `.500`. For a seed at or above the fixed dark anchor (a lightness lifted off pure black), the dark half runs from the seed toward that anchor, so the bottom stops stay distinguishable from each other and from black. For a seed darker than the anchor, the dark endpoint is derived from the seed's own lightness instead of the fixed anchor, so the dark half does not clip. The spacing rescales around the seed's own lightness, so a light seed compresses its light half and a dark seed compresses its dark half rather than clipping.
 - **Every stop is in sRGB gamut.** Where the seed's chroma cannot be represented at a stop's lightness and the seed's hue, chroma is reduced to the largest in-gamut value rather than channel-clipped, so high-chroma warm seeds produce clean tints instead of muddy clipped substitutes.
 - **Bright tints desaturate faster than dark shades.** Chroma falls off toward both ends of the ramp, asymmetrically: the light extreme ends closer to neutral than the dark extreme (matching Tailwind's convention of pastel highlights and hue-retaining dark variants).
 - **Near-achromatic seeds get a lifted light half.** A seed whose OKLCH chroma is below `0.05` is treated as a neutral: its light-half stops are lifted lighter (airier chrome surfaces, the way Tailwind hand-tunes its grays). The dark half is unaffected by the threshold.
@@ -1065,7 +1065,7 @@ Two diagnostic currencies exist: lexer/parser `ParseError`s (a message plus a sp
 
 ### 19.2 Lexer and parser errors
 
-All lexical and syntactic errors are hard (they surface as call-halting parse errors when a source is authored), but the lexer and parser both recover and continue so a single source yields all its errors at once. The inventory: unexpected character; hex length not 3/6/8; unterminated string; identifier starting with `-`; unterminated block comment (lexer); expected statement; expected `:`/`{` after a path; unknown active field; expected `{` after `modes:`; missing `,` between call arguments (one per gap); expected value/identifier/path/stop-key; expected closing bracket/brace/paren (parser).
+All lexical and syntactic errors are hard (they surface as call-halting parse errors when a source is authored), but the lexer and parser both recover and continue so a single source yields all its errors at once. The inventory: unexpected character; hex length not 3/4/6/8; unterminated string; identifier starting with `-`; unterminated block comment (lexer); expected statement; expected `:`/`{` after a path; unknown active field; expected `{` after `modes:`; missing `,` between call arguments (one per gap); expected value/identifier/path/stop-key; expected closing bracket/brace/paren (parser).
 
 ### 19.3 Resolver warnings
 
@@ -1081,7 +1081,7 @@ The resolver never halts. Every problem is a warning string: a generator-shape m
 
 ### 19.5 The authoring write gate
 
-The agent-facing authoring directive (`ds_file("name") <body>`) enforces the halt gate. It runs a *dry-run generation* over the reconstructed committed cascade (base cascade plus ancestor brand siblings plus the existing self plus the candidate body, pruned and merged) and refuses the write if any halt diagnostics are present, rendering the halt lines top to bottom. It also refuses a body with parse errors and a body containing an `active { ... }` block ([6.4](#64-the-active-block)). Warnings are surfaced but do not block. The write itself is a surgical text patch, so existing comments and ordering are preserved ([4.8](#48-comments-and-trivia)). A forgiveness pass treats `--` as a line comment (warning that `//` is canonical) and auto-quotes a multi-word `font.family` value (warning). The brand name MUST match `^[a-z0-9][a-z0-9-]*$` or the call halts. A dry-run halt refuses the write so no half-applied system lands; this is the concrete realization of the halt severity.
+The agent-facing authoring directive (`ds_file("name") <body>`) enforces the halt gate. The `ds_file("name")` header MUST occupy its own line: it is matched by an anchored pattern (`^\s*ds_file\(\s*"([^"]*)"\s*\)\s*$`) that rejects any trailing content after the closing parenthesis, and it opens a new design-system buffer that the following indented body fills. Before any generation, an authoring-permission gate fires at that header: it either allows the write, refuses it outright (a denied design-system-edit permission), or suspends it pending the user's decision (an unset permission); authoring a brand from scratch is itself the authorization and is exempt from the gate. Once permitted, the directive runs a *dry-run generation* over the reconstructed committed cascade (base cascade plus ancestor brand siblings plus the existing self plus the candidate body, pruned and merged) and refuses the write if any halt diagnostics are present, rendering the halt lines top to bottom. It also refuses a body with parse errors and a body containing an `active { ... }` block ([6.4](#64-the-active-block)). Warnings are surfaced but do not block. The write itself is a surgical text patch, so existing comments and ordering are preserved ([4.8](#48-comments-and-trivia)). A forgiveness pass treats `--` as a line comment (warning that `//` is canonical) and auto-quotes a multi-word `font.family` value (warning). An `unset { path }` entry in the body that matches no entry in this file is persisted as a residual unset (so a cascade removal from a parent still sticks) and surfaced as a warning. The brand name MUST match `^[a-z0-9][a-z0-9-]*$` or the call halts. A dry-run halt refuses the write so no half-applied system lands; this is the concrete realization of the halt severity. On a successful write the authoring session is auto-promoted to the just-authored brand, so subsequent element rows resolve against it (a stateless single-shot session is the exception).
 
 ---
 
@@ -1133,7 +1133,7 @@ The language evolves additively under a forgiving parser. New generators, roles,
 
 ### 21.2 Legacy migration
 
-A one-shot startup migration lifts a legacy single-file YAML `.styles` into the DSL layout: it converts `<folder>/.styles` into `<folder>/Styles/default.ds`, archiving the original under `Styles/.legacy/` for one release. The base file embeds the seed template first, then appends the user's migrated customizations (append-and-resolver-wins), so a customization overrides the corresponding template default. Brand siblings are kept sparse (no template embed). Pre-DSL catalog renames (`brand.5 -> brand.50`, and so on) are applied before parsing. The migration is idempotent; re-running it is a no-op, and a rollback restores the archived legacy layout.
+A one-shot startup migration lifts a legacy single-file YAML `.styles` into the DSL layout: it converts `<folder>/.styles` into `<folder>/Styles/default.ds`, archiving the original under `Styles/.legacy/` for one release. The base file embeds the seed template first, then appends the user's migrated customizations (append-and-resolver-wins), so a customization overrides the corresponding template default. Brand siblings are kept sparse (no template embed). No pre-DSL catalog renames are applied: the historical token-rename step (`brand.5 -> brand.50` and its siblings) is now an identity no-op, so the migration is a load-and-re-encode with no key rewriting. The migration is idempotent; re-running it is a no-op, and a rollback restores the archived legacy layout.
 
 ---
 
@@ -1224,7 +1224,7 @@ Font weight and line height have no dedicated catalog table; the historical `kFo
 
 - **Boldness roles** (9, center `mid`): `hint, faint, subtle, soft, mid, firm, bold, strong, intense`.
 - **Boldness color stop by role**: `hint: 50, faint: 100, subtle: 200, soft: 300, mid: 500, firm: 600, bold: 700, strong: 800, intense: 900`. Stops `.400` and `.950` are not mapped to a role and remain primitives.
-- **Boldness dark role swap**: `hint <-> intense, faint <-> strong, subtle <-> bold, soft <-> firm, mid <-> mid`. This is exactly what the default dark `mirror` now produces: the transform reflects across the 9-stop role band ([9.1](#91-boldness), [10.2](#102-transform-operations)), so each role lands on the partner listed here (the code realizes the swap via the index mirror rather than by consulting this table).
+- **Boldness dark role swap**: `hint <-> intense, faint <-> strong, subtle <-> bold, soft <-> firm, mid <-> mid`. This is exactly what the default dark `mirror` now produces: the transform reflects across the 9-stop role band ([9.1](#91-boldness), [10.2](#102-the-operators)), so each role lands on the partner listed here (the code realizes the swap via the index mirror rather than by consulting this table).
 - **T-shirt roles** (24): `xs, sm, md, lg, xl, 2xl, 3xl, 4xl, 5xl, 6xl, 7xl, 8xl, 9xl, 10xl, 11xl, 12xl, 13xl, 14xl, 15xl, 16xl, 17xl, 18xl, 19xl, 20xl`.
 - **T-shirt index by role for a linear scale** (generated-ramp/range form only): `xs: 1, sm: 2, md: 4, lg: 6, xl: 8, 2xl: 12, 3xl: 16, 4xl: 20, 5xl: 24, 6xl: 32`.
 - **Looseness roles** (6): `none, tight, snug, normal, relaxed, loose`.
@@ -1335,8 +1335,8 @@ color.on-surface:             neutral.strong
 
 color.surface.hover:          neutral.faint
 color.surface.pressed:        neutral.subtle
-color.surface.selected:       primary.subtle
-color.on-surface.selected:    primary.bold
+color.surface.selected:       primary.hint
+color.on-surface.selected:    neutral.bold
 
 color.outline:                neutral.soft
 color.outline.variant:        neutral.subtle
@@ -1349,35 +1349,35 @@ color.text.display.alt:       secondary.firm
 
 color.primary:                primary.mid
 color.on-primary:             neutral.50
-color.primary.container:      primary.subtle
+color.primary.container:      primary.hint
 
 color.secondary:              secondary.mid
 color.on-secondary:           neutral.50
-color.secondary.container:    secondary.subtle
+color.secondary.container:    secondary.hint
 
 color.tertiary:               tertiary.mid
 color.on-tertiary:            neutral.50
-color.tertiary.container:     tertiary.subtle
+color.tertiary.container:     tertiary.hint
 
 color.quaternary:             quaternary.mid
 color.on-quaternary:          neutral.900
-color.quaternary.container:   quaternary.subtle
+color.quaternary.container:   quaternary.hint
 
 color.success:                green.mid
 color.on-success:             neutral.50
-color.success.container:      green.subtle
+color.success.container:      green.hint
 
 color.error:                  red.mid
 color.on-error:               neutral.50
-color.error.container:        red.subtle
+color.error.container:        red.hint
 
 color.warning:                orange.mid
 color.on-warning:             neutral.900
-color.warning.container:      orange.subtle
+color.warning.container:      orange.hint
 
 color.info:                   blue.mid
 color.on-info:                neutral.50
-color.info.container:         blue.subtle
+color.info.container:         blue.hint
 
 // shadow and glow take absolute colors on purpose.
 color.shadow:                 neutral.950
