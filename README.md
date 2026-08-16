@@ -70,7 +70,7 @@ Throughout this document the language is referred to as *the language* or *the `
 
 [Blueprint](https://github.com/brilliant-hq/blueprint) is the language in which Brilliant designs are authored. A Blueprint design references a design system token with a `$` sigil (`f[($color.surface)]`, `t(..., $font.size.lg)`). That `$name` is resolved against a design system authored in the language specified here. The two languages are complementary and share the OKLCH ramp constants, so a seed expands to the same ramp whether it is generated here or referenced from a Blueprint `$name`; the reference resolves against a design system built by this language's generator. (An earlier Blueprint `$var` *declaration* preprocessor that expanded seeds inline has been removed: a legacy `$name=...` declaration is now stripped with a warning pointing to a `ds_file` design system, while a `$name` *reference* resolves unchanged.) They remain distinct surfaces with distinct grammars. In particular:
 
-- The `$` sigil is a Blueprint concern. Inside a `.ds` document a token reference is a bare dotted path with **no** sigil (`color.error: red.500`). The only `$`-led identifiers in `.ds` are engine metadata keys (`$default`, `$transforms`) and the picker directives (`$hide`, `$pin`); see [4.3](#43-identifiers) and [6.6](#66-hide-and-pin).
+- The `$` sigil is a Blueprint concern. Inside a `.ds` document a token reference is a bare dotted path with **no** sigil (`color.error: red.500`). The only `$`-led identifiers in `.ds` are engine metadata keys (`$default`, `$transforms`, `$type`) and the picker directives (`$hide`, `$pin`); see [4.3](#43-identifiers), [15.2](#152-type-inference-for-explicit-tokens), and [6.6](#66-hide-and-pin).
 - Alpha ordering in hex is the **same** on both surfaces: an 8-digit hex is `#RRGGBBAA` (alpha last), matching CSS and Blueprint; see [4.6](#46-hex-color-literals) and the note therein.
 
 ### 1.5 Relationship to the authoring guides
@@ -919,6 +919,16 @@ An explicit token's type is inferred from its key prefix: `spacing.`, `radius.`,
 > **Note (unknown key defaults to color).** A custom token whose key matches none of the known prefixes and is not a number-seed stop is treated as a color, and its value is hex-parsed. A non-color custom token with an unusual name is therefore liable to be dropped as an invalid color. Author custom numeric tokens under a `number(...)` seed (so they land in `numericSeeds`) or under a known prefix.
 
 > **Note (opacity as the catch-all numeric type).** There is no distinct "generic number" token type; the `opacity` type doubles as the catch-all 0-to-1 numeric type. Custom numeric semantics like `visibility` are typed `opacity`. The `visibility.invisible == 0` and `visibility.opaque == 1` stops resolve through the opacity path (validated).
+
+> **Note (the `$type` metadata key overrides inference).** A token block MAY declare its type explicitly with a reserved `$type:` metadata key. `$type` sets the token's type **verbatim** and always **wins over** key-prefix inference (and over any prior definition of the same key). The value is one of the token-type names (`color`, `string`, `boolean`, `opacity`, `spacing`, `radius`, `fontSize`, `fontFamily`, `fontWeight`, `lineHeight`, `letterSpacing`, `strokeWidth`, `typography`, `shadow`), plus two author-friendly aliases: `number` maps to the generic numeric type (`opacity`) and `bool` maps to `boolean`. An **unknown** `$type` value is a warning that names the token, and the type falls back to inference: never a silent drop, never a hard halt of the whole file. `$type` is metadata, not a value: it carries no mode branch and is skipped during value resolution, and it is preserved byte-faithfully through parse/format round trips. This closes the "unknown key defaults to color" trap above for tokens whose name a prefix cannot classify. Example (a plain string, a boolean, and a mode-varying generic number, none of which any key prefix would type correctly):
+>
+> ```
+> copy.cta      { $type: string,  $default: "Get started" }
+> flag.compact  { $type: boolean, $default: true }
+> metric.count  { $type: number,  $default: 3, dark: 9 }
+> ```
+
+> **Note (the `string` token type).** `string` holds a plain, mode-aware string value, resolved like any other themed token. It is the sibling of `fontFamily` for arbitrary (non-font) strings and is reached only via `$type: string` (no key prefix infers it). It has **no element consumers yet**: it round-trips through the catalog, resolver, generator, `.gen.yaml` writer, and formatter faithfully, ready for a future binding.
 
 ### 15.3 The empty-system promise
 

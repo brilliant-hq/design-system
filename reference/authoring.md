@@ -37,6 +37,11 @@ ds_file("fintech-warm")
   typography.h1: { fontSize: font.size.3xl, fontWeight: font.weight.bold }  // composite record
   shadow.md: [ drop(y: 2, blur: 4, color: rgba(0,0,0,0.1)) ]                // composite list
 
+  // $type sets a token's type explicitly (string, boolean, number, …), winning
+  // over the name-prefix guess. Use it for a value no prefix classifies, so it
+  // isn't mis-read as a color and dropped. Mode-aware like any token:
+  copy.cta { $type: string, $default: "Get started" }
+
   unset { color.primary, *.dark }   // drop inherited entries; *.key hits all semantics
 ```
 
