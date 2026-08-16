@@ -33,6 +33,7 @@ This reference specifies what the language *is*: its lexical and syntactic gramm
 19. [Diagnostics](#19-diagnostics)
 20. [Conformance requirements](#20-conformance-requirements)
 21. [Versioning and evolution](#21-versioning-and-evolution)
+22. [Imported design systems](#22-imported-design-systems)
 - [Appendix A. Collected grammar](#appendix-a-collected-grammar)
 - [Appendix B. Catalog constants](#appendix-b-catalog-constants)
 - [Appendix C. The seed template](#appendix-c-the-seed-template)
@@ -340,7 +341,7 @@ SemanticField     = SemanticKey ( ',' SemanticKey )* ':' Value ','?
 SemanticKey       = Path                 ; e.g. $default, dark, theme.dark
 ```
 
-A semantic block gives a token per-mode values. Each field is one or more comma-separated *keys* mapped to one value; multiple keys on a field form a *combo* that fires only when every listed mode is active. A key is a path: `$default` (the fallback), a bare mode value (`dark`), or an axis-qualified value (`theme.dark`). Combo keys are canonicalized during parsing: a single key becomes its dotted text; a combo is normalized to value-only segments, sorted alphabetically, and pipe-joined, so `theme.dark, density.compact` becomes `density.compact|theme.dark` at the AST level (and is further reduced to value-only `compact|dark` by the resolver; see [11.2](#112-key-canonicalization)).
+A semantic block gives a token per-mode values. Each field is one or more comma-separated *keys* mapped to one value; multiple keys on a field form a *combo* that fires only when every listed mode is active. A key is a path: `$default` (the fallback), a bare mode value (`dark`), or an axis-qualified value (`theme.dark`, `scheme.bright`). Combo keys are canonicalized during parsing: a single key becomes its dotted text; a combo's segments are sorted alphabetically and pipe-joined, so `theme.dark, density.compact` becomes `density.compact|theme.dark` at the AST level. A later canonicalization pass reduces each segment to its final stored form, which differs by axis kind: a built-in-axis segment is reduced to its bare value and a named-axis segment stays axis-qualified (see [11.2](#112-key-canonicalization)).
 
 ### 5.7 Error recovery
 
@@ -743,7 +744,12 @@ A semantic block `name { $default: v0, key1: v1, ... }` builds a mode-keyed toke
 
 ### 11.2 Key canonicalization
 
-Semantic-block keys are normalized to **value-only** form: `$default` is kept; any other key is split on `|`, each part's axis prefix is dropped (only the value after the last `.` is kept), the parts are sorted alphabetically, and rejoined with `|`. Thus `theme.dark` normalizes to `dark`, and `density.compact, theme.dark` normalizes to `compact|dark`. This value-only form is the key under which the value is stored in the token's `modeValues` map. (Contrast the axis-qualified keys of transform programs; see [16.4](#164-the-mode-key-duality).)
+Semantic-block keys are normalized to a single canonical form that is the key under which the value is stored in the token's `modeValues` map. `$default` is kept verbatim. Any other key is split on `|`, each part is canonicalized, the parts are sorted alphabetically, and they are rejoined with `|`. Part canonicalization depends on the axis the part names:
+
+- A **built-in-axis** part (an axis of [Appendix C](#appendix-c-the-seed-template)'s built-in set: `theme`, `density`, `accessibility`) is reduced to its **bare value**: `theme.dark` normalizes to `dark`, and `density.compact, theme.dark` normalizes to `compact|dark`. A bare built-in value is already canonical and is kept. This preserves the value-only keying that predates named axes.
+- A **named-axis** part (any axis the file declared in `modes { }` that is not one of the built-ins) stays **axis-qualified**: `scheme.bright` is stored as `scheme.bright`, never reduced to `bright`. A key authored bare that matches a named axis's declared value is qualified to that axis's form. A bare value declared under two or more named axes is ambiguous: it is qualified to the first declaring axis and a warning names the collision.
+
+The two forms never collide, which is what lets a named-axis value coexist with a built-in value of the same spelling (a named `dark` and `theme`'s `dark` resolve independently). Because reducing a built-in prefix requires knowing the built-in set, and qualifying a bare named value requires the merged axis vocabulary of the whole cascade, the final part canonicalization is completed after the cascade merge, against the merged `modeAxes`. (Contrast the axis-qualified keys of transform programs, which are always axis-qualified regardless of axis kind; see [16.4](#164-the-mode-key-duality).)
 
 ### 11.3 Resolution precedence
 
@@ -770,6 +776,31 @@ text.error    { $default: red.500, theme.dark, density.compact: red.200 }
 
 `color.surface` resolves to the value of `neutral.200` in light mode and `neutral.900` in dark mode (single-axis branch, validated). `text.error` carries a combo key that canonicalizes to `compact|dark`; with both `dark` and `compact` active it resolves to the value of `red.200` (combo pass, validated), and otherwise to `red.500`.
 
+### 11.5 Named mode axes and the active-key contract
+
+The `modes { }` declaration ([5.3](#53-modes-declaration), [6.1](#61-the-modes-declaration)) accepts **arbitrary** axes, not only the built-in three. An axis whose name is not one of the built-in set (`theme`, `density`, `accessibility`) is a *named axis*. A named axis is a first-class variance dimension: a token of any type MAY carry mode-keyed values on it (a color that varies on a `scheme` axis, a spacing value that varies on a `platform` axis), and it participates in the resolution order of [11.3](#113-resolution-precedence) and [16.2](#162-resolution-order) exactly as a built-in axis does. The first value listed on each axis is that axis's default ([5.3](#53-modes-declaration)).
+
+The canonical stored key for a mode-keyed value depends on the axis kind, as [11.2](#112-key-canonicalization) specifies: a built-in-axis value is stored **bare** (`dark`), a named-axis value is stored **axis-qualified** (`scheme.bright`). A combo mixes the two freely and each segment keeps its own form (`dark|scheme.bright`).
+
+**The active-key resolution contract.** Runtime resolution supplies an *active mode set*: the set of mode keys that are active for the query. For the single-axis and combo passes of [16.2](#162-resolution-order) to match a stored key, the active set MUST contain that stored key. A conforming caller therefore derives the active set from the active axis→value map by the following rule, and a conforming resolver MUST match against a set so derived:
+
+- A **built-in-axis** active value contributes **both** its axis-qualified form and its bare value (an active `theme=dark` contributes both `theme.dark` and `dark`). The bare form matches the value-only stored keys of built-in semantic branches; the qualified form matches the axis-qualified keys of transform programs ([16.4](#164-the-mode-key-duality)).
+- A **named-axis** active value contributes **only** its axis-qualified form (an active `scheme=bright` contributes `scheme.bright`, and never a bare `bright`). Emitting a bare named value is forbidden: a bare key could flip an unrelated built-in branch of the same spelling, which is the cross-talk the axis-qualified named form exists to prevent.
+
+Thus built-in branches are matched by both a qualified and a bare active key, while named branches are matched by the qualified key only. A named-axis value therefore never activates a built-in branch, and vice versa, even when the two share a spelling.
+
+### 11.6 Worked example (named axis, validated)
+
+```
+modes { scheme: [bright, dark] }
+color.surface {
+  $default: #AAAAAA
+  theme.dark: #BBBBBB
+}
+```
+
+`color.surface` stores the built-in branch bare (`dark`). Under active `theme=light, scheme=dark`, the active set is `{theme.light, light, scheme.dark}`: the named `scheme.dark` does not match the bare `dark` branch key, so resolution falls to `$default` (`#AAAAAA`). Under active `theme=dark`, the active set contains `dark`, which matches the branch (`#BBBBBB`). The named `scheme` axis and the built-in `theme` axis never cross-talk, though both spell one of their values `dark`. All values in this paragraph are validated by dynamic resolution.
+
 ---
 
 ## 12. Aliases and reference resolution
@@ -789,6 +820,32 @@ A reference to a **themed** token copies the whole mode-keyed shape, so an alias
 ### 12.3 Cycles and dangling references
 
 A reference **cycle** (`a -> b -> a`) is a halt diagnostic (`Reference cycle: a -> b -> a`); the members are excluded from resolution. A **dangling** reference (a target the active system does not define) is a halt diagnostic (`Token X references Y, which the active design system does not define`), reported once per dangling key. Both are refused writes ([19.4](#194-generator-diagnostics)).
+
+### 12.4 Cross-axis aliases
+
+A mode-keyed branch MAY reference a token that varies on a **different** axis than the branch's own key. When it does, the alias stays mode-aware across **both** axes: the referring token resolves for every combination of the two axes' values, adopting the target's per-mode value for the target's axis while the branch's own key still gates the referring axis.
+
+Consider a token `color.a` whose `scheme.bright` branch references `color.b`, where `color.b` itself varies on `theme`:
+
+```
+modes { scheme: [normal, bright] }
+color.b {
+  $default: #111111
+  theme.dark: #222222
+}
+color.a {
+  $default: #333333
+  scheme.bright: color.b
+}
+```
+
+All four `theme` x `scheme` combinations resolve correctly and independently (validated by dynamic resolution):
+
+- `scheme=normal` (either theme): `color.a` is its own `$default`, `#333333`. The `bright` branch is inactive, so `color.b`'s theme variance does not reach `color.a`.
+- `scheme=bright, theme=light`: `color.a` aliases `color.b`, which is `#111111` in light.
+- `scheme=bright, theme=dark`: `color.a` aliases `color.b`, which is `#222222` in dark.
+
+The cross-axis combination `scheme=bright` with `theme=dark` resolves to the target's dark value even though the referring token declared no `dark` branch of its own: the alias carries the target's cross-axis variance forward for every combination. Chains compose the same way: if `color.a` references `color.b` on one axis and `color.b` references `color.c` on another, `color.a` resolves `color.c`'s value for the combined active set. A combination the author writes **explicitly** on the referring token takes precedence over the combination the alias would otherwise contribute, and a combination that would pin one axis to two different values is never emitted (it can never be simultaneously active). This is the semantic guarantee; the build-time flattening that realizes it ([12.2](#122-build-time-flattening)) is an implementation concern.
 
 ---
 
@@ -976,7 +1033,7 @@ At build time the program's `stops` references are resolved to concrete values (
 
 ### 16.4 The mode-key duality
 
-Semantic-block values are keyed by **value-only** mode names (`dark`, `compact|dark`), while transform-program entries are keyed by **axis-qualified** mode names (`theme.dark`). The single-axis pass ([16.2](#162-resolution-order) step 3) matches value-only keys; the transform pass ([16.3](#163-program-execution)) matches axis-qualified keys. For both passes to fire, the active mode set supplied at query time MUST contain both forms of an active mode (both `dark` and `theme.dark`). A conforming resolver caller therefore populates the active set with each active mode in both its value-only and axis-qualified forms. This duality is a consequence of the two authoring surfaces (value-only keys are natural to write in a semantic block; axis-qualified keys are required to disambiguate a transform across axes) and is validated by the resolution of `primary.hint` in dark and `spacing.md` under `density.compact`, both of which require the axis-qualified form in the active set.
+Semantic-block values on a **built-in axis** are keyed by **value-only** mode names (`dark`, `compact|dark`), while transform-program entries are always keyed by **axis-qualified** mode names (`theme.dark`), regardless of axis kind. The single-axis pass ([16.2](#162-resolution-order) step 3) matches stored branch keys; the transform pass ([16.3](#163-program-execution)) matches axis-qualified keys. For both passes to fire on a built-in axis, the active mode set supplied at query time MUST contain both forms of the active mode (both `dark` and `theme.dark`), which is why the active-key contract ([11.5](#115-named-mode-axes-and-the-active-key-contract)) emits both forms for a built-in value. A **named-axis** semantic-block value is keyed axis-qualified (`scheme.bright`, see [11.2](#112-key-canonicalization)), so the single-axis pass matches it against the single axis-qualified form the active-key contract emits for a named value; no bare named form is ever emitted or matched. This duality is a consequence of the two authoring surfaces (value-only keys are natural to write in a built-in semantic block; axis-qualified keys are required to disambiguate a transform across axes, and to keep a named-axis value from colliding with a same-spelled built-in value) and is validated by the resolution of `primary.hint` in dark and `spacing.md` under `density.compact`, both of which require the axis-qualified form in the active set.
 
 ### 16.5 Worked example (validated)
 
@@ -1144,6 +1201,25 @@ The language evolves additively under a forgiving parser. New generators, roles,
 ### 21.2 Legacy migration
 
 A one-shot startup migration lifts a legacy single-file YAML `.styles` into the DSL layout: it converts `<folder>/.styles` into `<folder>/Styles/default.ds`, archiving the original under `Styles/.legacy/` for one release. The base file embeds the seed template first, then appends the user's migrated customizations (append-and-resolver-wins), so a customization overrides the corresponding template default. Brand siblings are kept sparse (no template embed). No pre-DSL catalog renames are applied: the historical token-rename step (`brand.5 -> brand.50` and its siblings) is now an identity no-op, so the migration is a load-and-re-encode with no key rewriting. The migration is idempotent; re-running it is a no-op, and a rollback restores the archived legacy layout.
+
+---
+
+## 22. Imported design systems
+
+A design system authored elsewhere (imported from another tool) is expressed in this language like any other, and it resolves through the same pipeline. This section specifies the one convention that import obligates: how a reconstructed *role* vocabulary is layered onto imported tokens without disturbing them. The mode mechanisms an import relies on are the named axes of [11.5](#115-named-mode-axes-and-the-active-key-contract) and the cross-axis aliases of [12.4](#124-cross-axis-aliases); this section adds no new language feature.
+
+### 22.1 The alias-role convention
+
+An imported system arrives as a set of *faithful* tokens: one token per source variable or style, keyed by the source's own name (sanitized to a legal path, see [4.3](#43-identifiers)) and never renamed. Faithful tokens are the single source of truth for their values.
+
+A reconstruction pass MAY additionally bind Brilliant's canonical *role* vocabulary (`color.primary`, `color.surface`, `color.text.*`, `typography.h1`, `spacing.md` and the other t-shirt names, and friends) onto the imported system. When it does, it MUST do so under the following convention:
+
+- **A role is a reference token, not a copy.** A role that a reconstruction adds is an alias ([12](#12-aliases-and-reference-resolution)) whose value is a reference to a faithful token, never an inlined literal. The role therefore resolves *equal* to its faithful source, and an override of the faithful token's value flows through the role. The reference direction is role -> faithful, which keeps the faithful (customer) value the single source of truth.
+- **A role never renames a faithful token.** The faithful token keeps its source-derived key verbatim. Both vocabularies coexist in the catalog: a search for the source's own name finds the faithful token, and a design authored against the canonical role names resolves too.
+- **A faithful token that already owns a role name wins.** If the imported system already defines a token whose key is a canonical role name, that faithful token is kept as-is and no role alias overwrites it. A sibling of that token that a reconstruction would otherwise have folded onto the same role (for instance a dark-theme counterpart) stays a separate faithful token rather than folding onto the taken role.
+- **Numeric role names are aliases only.** A t-shirt role added over a numeric scale (`spacing.md` over an imported spacing family) is an alias at the scale position; the faithful numeric tokens are untouched, and element bindings that referenced a faithful numeric token are **not** redirected onto the role. A sorted scale position is not a confident semantic role, so only the name is added, not a rebinding.
+
+The observable result is that both the imported vocabulary and the canonical role vocabulary resolve, the customer's values remain authoritative, and a brand or mode switch re-themes through the role aliases exactly as it would for a hand-authored system.
 
 ---
 

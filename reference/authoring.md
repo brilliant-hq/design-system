@@ -34,6 +34,19 @@ ds_file("fintech-warm")
   // (`theme.dark, density.compact:`) fires only when ALL modes active:
   color.surface { $default: neutral.hint, dark: neutral.intense }
 
+  // CUSTOM axes: `modes {}` declares any axis you like, not just the three
+  // built-ins (theme, density, accessibility). A branch key on a built-in
+  // axis is the bare value (`dark`); a branch key on a CUSTOM axis is
+  // axis-qualified (`<axis>.<value>`), so a custom `dark` never collides
+  // with theme's `dark`:
+  modes { scheme: [normal, bright] }
+  color.accent { $default: brand.mid, scheme.bright: brand.strong }
+  // A custom-axis alias can point at a token themed on ANOTHER axis; it stays
+  // mode-aware across both, resolving for every combination.
+  // Selecting an axis value per frame/element is `ds(, <axis>(value))`
+  // (`ds(, scheme(bright))`), the same for custom axes as for theme; see
+  // design-systems/core.
+
   typography.h1: { fontSize: font.size.3xl, fontWeight: font.weight.bold }  // composite record
   shadow.md: [ drop(y: 2, blur: 4, color: rgba(0,0,0,0.1)) ]                // composite list
 
