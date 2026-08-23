@@ -49,4 +49,12 @@ ds(, theme(dark))          // keep brand, go dark
 ds(editorial, theme(dark)) // both
 ```
 
+A brand name with a comma, double-quote, or newline rides quoted, same as an
+element name: `ds("My, Brand", theme(dark))`. Plain names stay unquoted.
+
+A brand from a **library** the project depends on is named by the library's
+handle: `ds(@acme/design-kit)` is the library's default look,
+`ds(@acme/design-kit/marketing)` one of its named brands. It resolves against
+the library's own tokens (see `reference/libraries`).
+
 See `design-systems/authoring` to author or extend a DS.
