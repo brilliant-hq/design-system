@@ -1403,6 +1403,7 @@ spacing.overlap.2xl: -32
 
 // Type pairs two voices.
 font.family:        Manrope
+font.family.sans:   font.family   // alias of the default: the same face
 font.family.serif:  "Noto Serif"
 font.family.mono:   monospace
 
