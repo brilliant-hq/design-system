@@ -21,6 +21,7 @@ ds_file("fintech-warm")
   primary:         boldness(color(#1976D2))            // 9 roles hint…intense
   spacing:         tshirt(number([4,8,16,24,32]), min: { none: 0 })  // xs…Nxl + named stop
   font.lineHeight: looseness(number([1,1.25,1.5]))     // 6 steps none…loose
+  font.letterSpacing: looseness(number([-0.05,0,0.05,0.1])) // FRACTIONS of the font size, like line-height multipliers: 0.05 = 5% tracking (0.8px at 16). For pixels, put ls(N) on the element instead.
   font.family:     "Noto Serif"                        // multi-word names need quotes; single-word fonts (Manrope, Inter) can stay bare
 
   // Color roles need boldness(color(...)), a bare hex is one frozen value,
