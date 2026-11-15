@@ -31,6 +31,25 @@ accent: boldness(color(#FF6B00),
 radius: tshirt(number([4,8,12,16,24]), transforms: none)
 ```
 
+## A seed's own dark colour
+
+`mirror` reuses the light ramp in dark. When the brand needs a different
+colour in dark (a lighter blue that reads on dark surfaces), give the seed
+its dark colour; the dark ramp is generated from it:
+
+```
+primary: boldness(color(#0080FF, dark: #66B2FF))   // dark ramp from #66B2FF
+accent:  color(#E11D48, dark: oklch(72%, 0.17, 12))
+```
+
+Under theme dark every stop (`primary.300`), the seed (`primary`), every
+role and every alias of them read the dark ramp; the role transforms still
+apply on top of it (dark `primary.mid` is `#66B2FF` itself, dark
+`primary.hint` mirrors to the dark ramp's `.900`). Light reads are exactly
+the seed's own ramp. Without `dark:` the dark ramp is the light ramp
+(today's behavior). A brand that rewrites the seed rewrites its dark colour
+with it.
+
 ## Ops
 
 Every op transforms the role's stop index, works on any generator. Out-of-range clamps.

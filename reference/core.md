@@ -5,7 +5,8 @@ dsl: [ds, designSystem, brand, mode]
 
 Every color, font, and scale value in a blueprint is a token (`$name`),
 resolved through the active design system. Init context shows that DS
-verbatim as a `.ds` catalog: read it for real token names and values.
+verbatim as a `.ds` catalog (a large one as its index, whose `read` line
+serves its statements): read it for real token names and values.
 
 Stops follow two vocabularies:
 - **Presence ramp** (brand/palette stops, `$font.weight`, `$stroke.width`,
@@ -14,7 +15,7 @@ Stops follow two vocabularies:
 - **T-shirt scale** (`$spacing`, `$radius`, `$font.size`):
   `xs sm md lg xl 2xl…Nxl`, plus `none`.
 
-Explicit mode halts on bare values in tokenizable slots: `g() pad() rd() o() w() lh() ls()`, `t()` size and weight positionals, and any color (`f[]`, `st[]`, gradient stops, shader colors, effect colors). Use a `$token`. `s()` sizing accepts bare numerics. Bare color seeds (`$primary` → `.mid`) are the one numeric-scale exception; primitive stops like `$primary.500` or `$spacing.4` halt, use role names. None mode inverts this: no design system, so use bare values and never `$token` (tokens halt). None is also the INITIAL state of a fresh chat session (the composer's design-system picker opens on None) unless a default was explicitly pinned, so a first design on a new canvas is bare-value work until someone picks a system.
+Explicit mode halts on bare values in tokenizable slots: `g() pad() rd() o() w() lh() ls()`, `t()` size and weight positionals, and any color (`f[]`, `st[]`, gradient stops, shader colors, effect colors). Use a `$token`. `s()` sizing accepts bare numerics. Bare color seeds (`$primary` → `.mid`) are the one numeric-scale exception; primitive stops like `$primary.500` or `$spacing.4` halt, use role names. None mode inverts this: no design system, so use bare values and never `$token` (tokens halt). None is also the INITIAL state of a fresh chat session (the composer's design-system picker opens on None) unless a default was explicitly pinned to a design system THIS project has, so a first design on a new canvas is bare-value work until someone picks a system. You may switch this chat yourself with `set_session_design_system` and say so.
 
 A card, dark-themed, annotated:
 
@@ -39,22 +40,5 @@ stops in `theme(light)`; switch to `theme(dark)` and the same low stops
 from `$color.*` aliases and identity from brand slots; Tailwind palettes are
 accents only, never chrome.
 
-## `ds()` picks brand and mode
-
-A top-level frame auto-stamps the active DS; children inherit.
-
-```
-ds(editorial)              // switch brand
-ds(, theme(dark))          // keep brand, go dark
-ds(editorial, theme(dark)) // both
-```
-
-A brand name with a comma, double-quote, or newline rides quoted, same as an
-element name: `ds("My, Brand", theme(dark))`. Plain names stay unquoted.
-
-A brand from a **library** the project depends on is named by the library's
-handle: `ds(@acme/design-kit)` is the library's default look,
-`ds(@acme/design-kit/marketing)` one of its named brands. It resolves against
-the library's own tokens (see `reference/libraries`).
-
+See `design-systems/apply` for `ds()` (the brand and mode a frame uses) and which design system a call uses.
 See `design-systems/authoring` to author or extend a DS.
